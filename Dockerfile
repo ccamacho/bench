@@ -2,28 +2,41 @@
 FROM python:3.9-slim
 
 # Set environment variables
-#ENV PYTHONDONTWRITEBYTECODE=1 \
-#    PYTHONUNBUFFERED=1 \
-#    PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Install system dependencies
+# Install system build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    gcc \
-    git \
-    build-essential \
-    libffi-dev \
-    libssl-dev \
+      curl \
+      git \
+      gcc \
+      build-essential \
+      libffi-dev \
+      libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
-RUN pip install --upgrade pip
+# Upgrade pip and install PEP-517 build tools (quote the <3 spec!)
+RUN pip install --upgrade pip \
+ && pip install build "setuptools>=61.0" "setuptools-git-versioning>=2.0,<3"
 
-# Install guidellm from GitHub, then pin httpx to a compatible version
-RUN pip install --no-cache-dir \
-      git+https://github.com/vllm-project/guidellm.git \
-      pandas numpy scipy bottleneck \
- && pip install --no-cache-dir httpx==0.23.3
+# Clone guidellm, build its wheel, install it, then pin httpx
+WORKDIR /tmp
+RUN git clone https://github.com/vllm-project/guidellm.git \
+ && cd guidellm \
+ && python -m build --wheel --no-isolation \
+ && pip install dist/guidellm-*.whl \
+ && pip install --upgrade "httpx==0.23.3" \
+ && cd /tmp && rm -rf guidellm
 
-# Set working directory
+# Install any additional runtime dependencies
+RUN pip install pandas numpy scipy bottleneck
+
+# Prepare cache and output directories for your Job
+RUN mkdir /cache /output
+
+# Switch to app directory
 WORKDIR /app
+
+# Default to bash (override in your Job YAML)
+CMD ["bash"]
