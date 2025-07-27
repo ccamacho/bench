@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guidellm-benchmark
+  namespace: llm-d
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: guidellm-benchmark
+    spec:
+      restartPolicy: Never
+      #securityContext:
+      #  runAsUser: 1000
+      #  fsGroup: 1000
+      containers:
+        - name: benchmark
+          image: ghcr.io/ccamacho/bench:main
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "Running benchmark...";
+              export HF_TOKEN=$(cat /secrets/token);
+              export TRANSFORMERS_OFFLINE=0;
+              export HF_HUB_DISABLE_TELEMETRY=1;
+              export HF_HOME=/cache;
+              export TRANSFORMERS_CACHE=/cache;
+              export HOME=/cache;
+              guidellm benchmark \
+                --target http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local \
+                --rate-type sweep \
+                --max-seconds 30 \
+                --data "prompt_tokens=256,output_tokens=128";
+              echo "Benchmark complete. Results stored in /output/results.json"
+          volumeMounts:
+            - name: results-volume
+              mountPath: /output
+            - name: hf-secret
+              mountPath: /secrets
+              readOnly: true
+            - name: hf-cache
+              mountPath: /cache
+        - name: sidecar
+          image: busybox
+          command: ["sh", "-c", "sleep infinity"]
+          volumeMounts:
+            - name: results-volume
+              mountPath: /output
+      volumes:
+        - name: results-volume
+          emptyDir: {}
+        - name: hf-secret
+          secret:
+            secretName: hf-token-secret
+        - name: hf-cache
+          emptyDir: {}
