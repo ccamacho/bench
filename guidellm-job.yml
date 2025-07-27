@@ -19,6 +19,11 @@ spec:
         - name: benchmark
           image: ghcr.io/ccamacho/bench:main
           imagePullPolicy: Always
+          env:
+            # - name: GUIDELLM__MAX_WORKER_PROCESSES
+            #   value: "1"
+            - name: GUIDELLM__STREAM
+              value: "false"
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -29,10 +34,13 @@ spec:
               export HF_HOME=/cache;
               export TRANSFORMERS_CACHE=/cache;
               export HOME=/cache;
+              TS=$(date +"%Y%m%d-%H%M%S");
+              OUTPUT_FILE="/output/results-${TS}.json";
               guidellm benchmark \
+                --output-path $OUTPUT_FILE \
                 --target http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local \
                 --rate-type sweep \
-                --max-seconds 30 \
+                --max-seconds 60 \
                 --data "prompt_tokens=256,output_tokens=128";
               echo "Benchmark complete. Results stored in /output/results.json"
           volumeMounts:
