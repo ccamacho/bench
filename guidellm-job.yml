@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: guidellm-benchmark
-  namespace: llm-d
+  namespace: bench
 spec:
   ttlSecondsAfterFinished: 86400
   backoffLimit: 0
@@ -38,7 +38,7 @@ spec:
               OUTPUT_FILE="/output/results-${TS}.json";
               guidellm benchmark \
                 --output-path $OUTPUT_FILE \
-                --target http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local \
+                --target http://vllm-my-vllm-runtime.apps.ccamacho-llmd.ibm.rhperfscale.org \
                 --rate-type sweep \
                 --max-seconds 60 \
                 --data "prompt_tokens=256,output_tokens=128";

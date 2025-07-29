@@ -10,16 +10,16 @@ FROM ghcr.io/ccamacho/bench:latest
 ## Testing the bench container
 
 ```bash
-oc create project llm-d
+oc new-project bench
 ```
 
 We make sure we cleanup the environment first
 
 ```bash
 # Begin Cleanup
-oc delete job -n llm-d -l job-name=guidellm-benchmark --ignore-not-found
-oc get pods -n llm-d --no-headers | grep guidellm-benchmark | awk '{print $1}' | xargs -r -n1 oc delete pod -n llm-d
-oc delete secret hf-token-secret -n llm-d --ignore-not-found
+oc delete job -n bench -l job-name=guidellm-benchmark --ignore-not-found
+oc get pods -n bench --no-headers | grep guidellm-benchmark | awk '{print $1}' | xargs -r -n1 oc delete pod -n bench
+oc delete secret hf-token-secret -n bench --ignore-not-found
 # End Cleanup
 ```
 
@@ -28,7 +28,7 @@ Make sure you have the HF key available
 ```bash
 oc create secret generic hf-token-secret \
   --from-file=token=$HOME/.keys/hf.key \
-  -n llm-d
+  -n bench
 ```
 
 Note: Make sure to update
@@ -39,18 +39,18 @@ with the actual endpoint you are testing in guidellm-job.yml.
 # Deploy the job
 oc apply -f guidellm-job.yml
 
-oc get job -n llm-d guidellm-benchmark
+oc get job -n bench guidellm-benchmark
 
 # Fetch the status and results
-oc get pods -n llm-d | grep guidellm-benchmark
-POD=$(oc get pods -n llm-d --no-headers | grep guidellm-benchmark | awk '{print $1}')
+oc get pods -n bench | grep guidellm-benchmark
+POD=$(oc get pods -n bench --no-headers | grep guidellm-benchmark | awk '{print $1}')
 
-oc logs $POD -n llm-d -c benchmark
-oc exec -n llm-d -c sidecar $POD -- ls -ltahR /output/
+oc logs $POD -n bench -c benchmark
+oc exec -n bench -c sidecar $POD -- ls -ltahR /output/
 
-RESULT_FILE=$(oc exec -n llm-d -c sidecar "$POD" -- sh -c 'ls -1 /output/results-*.json | head -n1')
+RESULT_FILE=$(oc exec -n bench -c sidecar "$POD" -- sh -c 'ls -1 /output/results-*.json | head -n1')
 
-oc cp "llm-d/${POD}:${RESULT_FILE}" "./$(basename "$RESULT_FILE")" -c sidecar
+oc cp "bench/${POD}:${RESULT_FILE}" "./$(basename "$RESULT_FILE")" -c sidecar
 
 ```
 
