@@ -38,7 +38,7 @@ spec:
               OUTPUT_FILE="/output/results-${TS}.json";
               guidellm benchmark \
                 --output-path $OUTPUT_FILE \
-                --target http://vllm-my-vllm-runtime.apps.ccamacho-llmd.ibm.rhperfscale.org \
+                --target http://yourendpointgoeshere \
                 --rate-type sweep \
                 --max-seconds 60 \
                 --data "prompt_tokens=256,output_tokens=128";

@@ -33,9 +33,11 @@ oc create secret generic hf-token-secret \
 
 Note: Make sure to update
 `--target http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local \`
-with the actual endpoint you are testing in guidellm-job.yml.
+with the actual endpoint you are testing in `guidellm-job.yml`.
 
-```
+Now let's run the job and fetch the results.
+
+```bash
 # Deploy the job
 oc apply -f guidellm-job.yml
 
@@ -44,17 +46,21 @@ oc get job -n bench guidellm-benchmark
 # Fetch the status and results
 oc get pods -n bench | grep guidellm-benchmark
 POD=$(oc get pods -n bench --no-headers | grep guidellm-benchmark | awk '{print $1}')
+RESULT_FILE=$(oc exec -n bench -c sidecar "$POD" -- sh -c 'ls -1 /output/results-*.json | head -n1')
+RESULT_FILENAME=$(basename "$RESULT_FILE")
+LOG_FILENAME="${RESULT_FILENAME%.json}-logs.txt"
 
 oc logs $POD -n bench -c benchmark
 oc exec -n bench -c sidecar $POD -- ls -ltahR /output/
 
-RESULT_FILE=$(oc exec -n bench -c sidecar "$POD" -- sh -c 'ls -1 /output/results-*.json | head -n1')
-
 oc cp "bench/${POD}:${RESULT_FILE}" "./$(basename "$RESULT_FILE")" -c sidecar
+oc logs "$POD" -n bench -c benchmark > "$LOG_FILENAME"
 
+echo "- Logs saved to: $LOG_FILENAME"
+echo "- Results saved to: $RESULT_FILENAME"
 ```
 
-This will give you a file like results-TS.json locally,
+This will give you both the json output and the logs locally,
 now you can work on your results
 
 ## Debugging
