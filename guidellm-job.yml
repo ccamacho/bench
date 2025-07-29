@@ -22,8 +22,8 @@ spec:
           env:
             # - name: GUIDELLM__MAX_WORKER_PROCESSES
             #   value: "1"
-            - name: GUIDELLM__STREAM
-              value: "false"
+            # - name: GUIDELLM__STREAM
+            #   value: "false"
           command: ["/bin/bash", "-c"]
           args:
             - |
