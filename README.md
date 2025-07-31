@@ -35,6 +35,10 @@ Note: Make sure to update
 `--target http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local \`
 with the actual endpoint you are testing in `guidellm-job.yml`.
 
+VLLM_HOST=$(oc get route vllm -n my-vllm-runtime -o jsonpath='{.spec.host}')
+
+curl http://$VLLM_HOST/health
+
 Now let's run the job and fetch the results.
 
 ```bash
