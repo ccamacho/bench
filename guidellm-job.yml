@@ -15,15 +15,27 @@ spec:
       #securityContext:
       #  runAsUser: 1000
       #  fsGroup: 1000
+      initContainers:
+        - name: timestamp-generator
+          image: busybox
+          command: ["sh", "-c"]
+          args:
+            - |
+              TS=$(date +"%Y%m%d-%H%M%S");
+              echo $TS > /shared/timestamp;
+              echo "Generated timestamp: $TS"
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
       containers:
         - name: benchmark
           image: ghcr.io/ccamacho/bench:main
           imagePullPolicy: Always
           env:
-            # - name: GUIDELLM__MAX_WORKER_PROCESSES
-            #   value: "1"
-            # - name: GUIDELLM__STREAM
-            #   value: "false"
+            - name: GUIDELLM__MAX_WORKER_PROCESSES
+              value: "1"
+            - name: GUIDELLM__STREAM
+              value: "false"
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -34,16 +46,18 @@ spec:
               export HF_HOME=/cache;
               export TRANSFORMERS_CACHE=/cache;
               export HOME=/cache;
-              TS=$(date +"%Y%m%d-%H%M%S");
-              OUTPUT_FILE="/output/results-${TS}.json";
+              TS=$(cat /shared/timestamp);
+              OUTPUT_FILE="/output/results-guidellm-${TS}.json";
               guidellm benchmark \
                 --output-path $OUTPUT_FILE \
-                --target http://yourendpointgoeshere \
+                --target http://your-llm-endpoint.com \
                 --rate-type concurrent \
-                --rate "1.0,2.0,4.0,8.0,16.0,32.0,64.0,128.0,256.0,512.0" \
+                --rate "1.0,2.0,4.0,8.0,16.0,32.0,64.0,128.0" \
                 --max-seconds 60 \
                 --data "prompt_tokens=256,output_tokens=128";
-              echo "Benchmark complete. Results stored in /output/results.json"
+              echo "Benchmark complete. Results stored in $OUTPUT_FILE";
+              echo "done" > /shared/benchmark_complete;
+              echo "Signaled nvidia-smi monitor to stop"
           volumeMounts:
             - name: results-volume
               mountPath: /output
@@ -52,6 +66,31 @@ spec:
               readOnly: true
             - name: hf-cache
               mountPath: /cache
+            - name: shared-data
+              mountPath: /shared
+        - name: dcgm-metrics-scraper
+          image: curlimages/curl
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Starting DCGM metric scraping...";
+              TS=$(cat /shared/timestamp);
+              OUTPUT_FILE="/output/results-dcgm-${TS}.txt";
+              while true; do
+                if [ -f /shared/benchmark_complete ]; then
+                  echo "Benchmark completed signal received. Stopping metrics scrape.";
+                  break;
+                fi
+                curl -s http://nvidia-dcgm-exporter.nvidia-gpu-operator.svc.cluster.local:9400/metrics >> $OUTPUT_FILE
+                echo "---" >> $OUTPUT_FILE
+                sleep 1
+              done;
+              echo "Metrics scraping stopped. Data saved to $OUTPUT_FILE";
+          volumeMounts:
+            - name: results-volume
+              mountPath: /output
+            - name: shared-data
+              mountPath: /shared
         - name: sidecar
           image: busybox
           command: ["sh", "-c", "sleep infinity"]
@@ -65,4 +104,6 @@ spec:
           secret:
             secretName: hf-token-secret
         - name: hf-cache
+          emptyDir: {}
+        - name: shared-data
           emptyDir: {}
