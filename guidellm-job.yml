@@ -1,3 +1,17 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bench-prometheus-access
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: bench
+roleRef:
+  kind: ClusterRole
+  name: prometheus-k8s
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -11,6 +25,7 @@ spec:
       labels:
         job-name: guidellm-benchmark
     spec:
+      serviceAccountName: default
       restartPolicy: Never
       #securityContext:
       #  runAsUser: 1000
@@ -48,16 +63,33 @@ spec:
               export HOME=/cache;
               TS=$(cat /shared/timestamp);
               OUTPUT_FILE="/output/results-guidellm-${TS}.json";
-              guidellm benchmark \
-                --output-path $OUTPUT_FILE \
-                --target http://your-llm-endpoint.com \
-                --rate-type concurrent \
-                --rate "1.0,2.0,4.0,8.0,16.0,32.0,64.0,128.0" \
-                --max-seconds 60 \
-                --data "prompt_tokens=256,output_tokens=128";
+              
+              # Record benchmark start time
+              # BENCHMARK_START=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
+              # Record benchmark start time (4 hours ago for testing)
+              BENCHMARK_START=$(date -u -d "4 hours ago" +"%Y-%m-%dT%H:%M:%S.%3NZ");
+              echo $BENCHMARK_START > /shared/benchmark_start_time;
+              echo "Test benchmark start time (4 hours ago): $BENCHMARK_START";
+              
+              # Commented out for testing - guidellm benchmark
+              # guidellm benchmark \
+              #   --output-path $OUTPUT_FILE \
+              #   --target http://your-llm-endpoint.com \
+              #   --rate-type concurrent \
+              #   --rate "128.0" \
+              #   --max-seconds 60 \
+              #   --data "prompt_tokens=256,output_tokens=128";
+              
+              echo "Skipping guidellm benchmark for Thanos metrics testing";
+              sleep 5; # Brief pause to simulate some work
+              
+              # Record benchmark end time (now)
+              BENCHMARK_END=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
+              echo $BENCHMARK_END > /shared/benchmark_end_time;
+              echo "Test benchmark end time (now): $BENCHMARK_END";
               echo "Benchmark complete. Results stored in $OUTPUT_FILE";
               echo "done" > /shared/benchmark_complete;
-              echo "Signaled nvidia-smi monitor to stop"
+              echo "Signaled metrics scraper to start data collection"
           volumeMounts:
             - name: results-volume
               mountPath: /output
@@ -68,24 +100,60 @@ spec:
               mountPath: /cache
             - name: shared-data
               mountPath: /shared
-        - name: dcgm-metrics-scraper
+        - name: thanos-metrics-scraper
           image: curlimages/curl
           command: ["sh", "-c"]
           args:
             - |
-              echo "Starting DCGM metric scraping...";
-              TS=$(cat /shared/timestamp);
-              OUTPUT_FILE="/output/results-dcgm-${TS}.txt";
-              while true; do
-                if [ -f /shared/benchmark_complete ]; then
-                  echo "Benchmark completed signal received. Stopping metrics scrape.";
-                  break;
-                fi
-                curl -s http://nvidia-dcgm-exporter.nvidia-gpu-operator.svc.cluster.local:9400/metrics >> $OUTPUT_FILE
-                echo "---" >> $OUTPUT_FILE
-                sleep 1
+              echo "Starting Thanos metrics collection...";
+              
+              # Wait for benchmark to complete
+              echo "Waiting for benchmark to complete...";
+              while [ ! -f /shared/benchmark_complete ]; do
+                sleep 2;
               done;
-              echo "Metrics scraping stopped. Data saved to $OUTPUT_FILE";
+              
+              # Get files
+              TS=$(cat /shared/timestamp);
+              TOKEN=$(cat /run/secrets/kubernetes.io/serviceaccount/token);
+              OUTPUT_FILE="/output/results-thanos-${TS}.json";
+              
+              # Use current time as fallback for 4-hour window
+              END_UNIX=$(date +%s);
+              START_UNIX=$((END_UNIX - 14400));
+              
+              echo "Using 4-hour window: $START_UNIX to $END_UNIX";
+              
+              # Test connection
+              echo "Testing Thanos connection...";
+              curl -s -k -H "Authorization: Bearer $TOKEN" \
+                "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query?query=up" \
+                > /dev/null && echo "Connection successful" || echo "Connection failed";
+              
+              # Create JSON structure
+              echo "{\"benchmark_start\":\"4 hours ago\",\"benchmark_end\":\"now\",\"metrics\":{" > $OUTPUT_FILE;
+              
+              # Define metrics that actually have data
+              GPU_METRICS="DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_MEM_COPY_UTIL DCGM_FI_DEV_FB_USED DCGM_FI_DEV_FB_FREE DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_GPU_TEMP DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_MEM_CLOCK";
+              VLLM_CONTAINER_METRICS="rate(container_cpu_usage_seconds_total{namespace=\"my-vllm-runtime\"}[5m]) rate(container_memory_working_set_bytes{namespace=\"my-vllm-runtime\"}[5m]) rate(container_network_receive_bytes_total{namespace=\"my-vllm-runtime\"}[5m]) rate(container_network_transmit_bytes_total{namespace=\"my-vllm-runtime\"}[5m])";
+              METRICS="$GPU_METRICS $VLLM_CONTAINER_METRICS";
+              
+              FIRST=true;
+              for METRIC in $METRICS; do
+                if [ "$FIRST" = "false" ]; then
+                  echo "," >> $OUTPUT_FILE;
+                fi
+                FIRST=false;
+                
+                echo "Querying metric: $METRIC";
+                URL="https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query_range?query=${METRIC}&start=${START_UNIX}&end=${END_UNIX}&step=15";
+                RESPONSE=$(curl -s -k -H "Authorization: Bearer $TOKEN" "$URL" 2>/dev/null || echo '{"error":"query_failed"}');
+                
+                echo "\"$METRIC\":$RESPONSE" >> $OUTPUT_FILE;
+              done
+              
+              echo "}}" >> $OUTPUT_FILE;
+              echo "Metrics collection complete. Data saved to $OUTPUT_FILE";
           volumeMounts:
             - name: results-volume
               mountPath: /output
