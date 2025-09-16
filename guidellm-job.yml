@@ -48,13 +48,13 @@ spec:
           imagePullPolicy: Always
           env:
             - name: GUIDELLM__MAX_WORKER_PROCESSES
-              value: "1"
+              value: "4"  # Increased to match our 4 model replicas
             - name: GUIDELLM__STREAM
               value: "false"
           command: ["/bin/bash", "-c"]
           args:
             - |
-              echo "Running benchmark...";
+              echo "Running benchmark against LLM-D inference service...";
               export HF_TOKEN=$(cat /secrets/token);
               export TRANSFORMERS_OFFLINE=0;
               export HF_HUB_DISABLE_TELEMETRY=1;
@@ -65,28 +65,59 @@ spec:
               OUTPUT_FILE="/output/results-guidellm-${TS}.json";
               
               # Record benchmark start time
-              # BENCHMARK_START=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
-              # Record benchmark start time (4 hours ago for testing)
-              BENCHMARK_START=$(date -u -d "4 hours ago" +"%Y-%m-%dT%H:%M:%S.%3NZ");
+              # BENCHMARK_START=$(date -u -d "4 hours ago" +"%Y-%m-%dT%H:%M:%S.%3NZ");
+              BENCHMARK_START=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
               echo $BENCHMARK_START > /shared/benchmark_start_time;
-              echo "Test benchmark start time (4 hours ago): $BENCHMARK_START";
+              echo "Benchmark start time: $BENCHMARK_START";
               
-              # Commented out for testing - guidellm benchmark
+              # Wait for LLM-D service to be ready
+              echo "Checking LLM-D service availability...";
+              LLM_D_ENDPOINT="http://infra-inference-scheduling-inference-gateway-istio.llm-d-inference-scheduling.svc.cluster.local";
+              
+              # Test service availability
+              for i in {1..30}; do
+                if curl -s -f "${LLM_D_ENDPOINT}/v1/models" > /dev/null; then
+                  echo "LLM-D service is ready!";
+                  break;
+                else
+                  echo "Waiting for LLM-D service... attempt $i/30";
+                  sleep 10;
+                fi
+              done
+              
+              # Run guidellm benchmark against our LLM-D service
+              echo "Starting guidellm benchmark against LLM-D...";
+              
+              # # Test basic single-turn benchmark first
+              # echo "Running single-turn benchmark...";
               # guidellm benchmark \
               #   --output-path $OUTPUT_FILE \
-              #   --target http://your-llm-endpoint.com \
+              #   --target ${LLM_D_ENDPOINT} \
+              #   --model "meta-llama/Llama-3.1-8B-Instruct" \
               #   --rate-type concurrent \
-              #   --rate "128.0" \
-              #   --max-seconds 60 \
-              #   --data "prompt_tokens=256,output_tokens=128";
+              #   --rate "16.0" \
+              #   --max-seconds 180 \
+              #   --data "prompt_tokens=128,output_tokens=64" \
+              #   --endpoint "/v1/chat/completions";
               
-              echo "Skipping guidellm benchmark for Thanos metrics testing";
-              sleep 5; # Brief pause to simulate some work
+              # Test multiturn benchmark if supported (from PR #211)
+              echo "Attempting multiturn benchmark with PR #211 features...";
+              MULTITURN_OUTPUT_FILE="/output/results-guidellm-${TS}.json";
               
-              # Record benchmark end time (now)
+              # Try multiturn benchmark (may fail if PR features not fully available)
+              guidellm benchmark run \
+                --output-path $MULTITURN_OUTPUT_FILE \
+                --target ${LLM_D_ENDPOINT} \
+                --model "meta-llama/Llama-3.1-8B-Instruct" \
+                --rate-type synchronous \
+                --max-requests 800 \
+                --data "prompt_tokens=256,output_tokens=256,turns=3" 
+              echo "Benchmark testing complete";
+              
+              # Record benchmark end time
               BENCHMARK_END=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
               echo $BENCHMARK_END > /shared/benchmark_end_time;
-              echo "Test benchmark end time (now): $BENCHMARK_END";
+              echo "Benchmark end time: $BENCHMARK_END";
               echo "Benchmark complete. Results stored in $OUTPUT_FILE";
               echo "done" > /shared/benchmark_complete;
               echo "Signaled metrics scraper to start data collection"
@@ -118,11 +149,49 @@ spec:
               TOKEN=$(cat /run/secrets/kubernetes.io/serviceaccount/token);
               OUTPUT_FILE="/output/results-thanos-${TS}.json";
               
-              # Use current time as fallback for 4-hour window
-              END_UNIX=$(date +%s);
-              START_UNIX=$((END_UNIX - 14400));
-              
-              echo "Using 4-hour window: $START_UNIX to $END_UNIX";
+              # Debug: Check shared directory access
+              echo "Checking shared directory contents:";
+              ls -la /shared/ || echo "Cannot access /shared directory";
+              echo "Current working directory: $(pwd)";
+              echo "Available files:";
+              find /shared -type f 2>/dev/null || echo "No files found in /shared";
+              # Get actual benchmark start/end times with better parsing
+              if [ -f /shared/benchmark_start_time ] && [ -f /shared/benchmark_end_time ]; then
+                BENCHMARK_START=$(cat /shared/benchmark_start_time);
+                BENCHMARK_END=$(cat /shared/benchmark_end_time);
+                echo "Raw benchmark start: $BENCHMARK_START";
+                echo "Raw benchmark end: $BENCHMARK_END";
+                
+                # Convert ISO format to Unix timestamp (handle both with and without milliseconds)
+                # Format: 2025-09-16T15:13:22.430Z or 2025-09-16T15:13:22Z
+                START_CLEAN=$(echo "$BENCHMARK_START" | sed 's/\.[0-9]*Z$/Z/' | sed 's/Z$/+00:00/');
+                END_CLEAN=$(echo "$BENCHMARK_END" | sed 's/\.[0-9]*Z$/Z/' | sed 's/Z$/+00:00/');
+                
+                # Try multiple date parsing approaches
+                START_UNIX=$(date -d "$START_CLEAN" +%s 2>/dev/null || date -d "$BENCHMARK_START" +%s 2>/dev/null || echo "");
+                END_UNIX=$(date -d "$END_CLEAN" +%s 2>/dev/null || date -d "$BENCHMARK_END" +%s 2>/dev/null || echo "");
+                
+                echo "Parsed start timestamp: $START_UNIX";
+                echo "Parsed end timestamp: $END_UNIX";
+                
+                if [ -n "$START_UNIX" ] && [ -n "$END_UNIX" ] && [ "$START_UNIX" -lt "$END_UNIX" ]; then
+                  # Add 30-second buffer before and after for complete coverage
+                  START_UNIX=$((START_UNIX - 30));
+                  END_UNIX=$((END_UNIX + 30));
+                  DURATION=$((END_UNIX - START_UNIX));
+                  echo "Using actual benchmark window with buffer: $START_UNIX to $END_UNIX (${DURATION}s duration)";
+                else
+                  echo "Failed to parse timestamps, using fallback";
+                  END_UNIX=$(date +%s);
+                  START_UNIX=$((END_UNIX - 600));  # 10-minute fallback for longer benchmark
+                  echo "Using 10-minute fallback window: $START_UNIX to $END_UNIX";
+                fi
+              else
+                echo "Benchmark time files not found, using fallback";
+                END_UNIX=$(date +%s);
+                START_UNIX=$((END_UNIX - 600));  # 10-minute fallback for longer benchmark
+                echo "Using 10-minute fallback window: $START_UNIX to $END_UNIX";
+              fi
               
               # Test connection
               echo "Testing Thanos connection...";
@@ -130,26 +199,96 @@ spec:
                 "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query?query=up" \
                 > /dev/null && echo "Connection successful" || echo "Connection failed";
               
+              # List all available vLLM metrics for debugging
+              echo "Discovering available vLLM metrics...";
+              
+              # First try to get all metric names
+              METRICS_RESPONSE=$(curl -s -k -H "Authorization: Bearer $TOKEN" \
+                "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/label/__name__/values");
+              
+              echo "Metrics API response status: $(echo "$METRICS_RESPONSE" | grep -o '"status":"[^"]*"' || echo 'no status found')";
+              
+              # Extract vLLM metrics with better error handling
+              if command -v jq >/dev/null 2>&1; then
+                AVAILABLE_VLLM_METRICS=$(echo "$METRICS_RESPONSE" | jq -r '.data[]? | select(. | contains("vllm"))' 2>/dev/null || echo "");
+              else
+                # Fallback parsing without jq
+                AVAILABLE_VLLM_METRICS=$(echo "$METRICS_RESPONSE" | grep -o '"vllm[^"]*"' | tr -d '"' | tr '\n' ' ' || echo "");
+              fi
+              
+              echo "Available vLLM metrics found: '$AVAILABLE_VLLM_METRICS'";
+              echo "$AVAILABLE_VLLM_METRICS" > /output/available-vllm-metrics-${TS}.txt;
+              
+              # Also try to discover any additional metrics patterns
+              echo "Checking for additional metric patterns...";
+              if [ -n "$METRICS_RESPONSE" ]; then
+                echo "Total metrics discovered: $(echo "$METRICS_RESPONSE" | grep -o '"[^"]*"' | wc -l)";
+                echo "$METRICS_RESPONSE" > /output/all-metrics-response-${TS}.json;
+              fi
+              
               # Create JSON structure
-              echo "{\"benchmark_start\":\"4 hours ago\",\"benchmark_end\":\"now\",\"metrics\":{" > $OUTPUT_FILE;
+              echo "{\"benchmark_start\":\"$BENCHMARK_START\",\"benchmark_end\":\"$BENCHMARK_END\",\"available_vllm_metrics\":\"$AVAILABLE_VLLM_METRICS\",\"metrics\":{" > $OUTPUT_FILE;
               
-              # Define metrics that actually have data
-              GPU_METRICS="DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_MEM_COPY_UTIL DCGM_FI_DEV_FB_USED DCGM_FI_DEV_FB_FREE DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_GPU_TEMP DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_MEM_CLOCK";
-              VLLM_CONTAINER_METRICS="rate(container_cpu_usage_seconds_total{namespace=\"my-vllm-runtime\"}[5m]) rate(container_memory_working_set_bytes{namespace=\"my-vllm-runtime\"}[5m]) rate(container_network_receive_bytes_total{namespace=\"my-vllm-runtime\"}[5m]) rate(container_network_transmit_bytes_total{namespace=\"my-vllm-runtime\"}[5m])";
-              METRICS="$GPU_METRICS $VLLM_CONTAINER_METRICS";
+              # Define comprehensive metrics for LLM-D monitoring (using basic shell syntax)
+              ALL_METRICS="DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_MEM_COPY_UTIL DCGM_FI_DEV_FB_USED DCGM_FI_DEV_FB_FREE DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_GPU_TEMP DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_MEM_CLOCK vllm:num_requests_running vllm:num_requests_waiting vllm:gpu_cache_usage_perc vllm:kv_cache_usage_perc vllm:prompt_tokens_total vllm:generation_tokens_total vllm:prefix_cache_hits_total vllm:prefix_cache_queries_total vllm:time_to_first_token_seconds_sum vllm:time_per_output_token_seconds_sum vllm:request_success_total vllm:avg_prompt_throughput_toks_per_s vllm:avg_generation_throughput_toks_per_s vllm:num_preemptions_total gaie_active_endpoints gaie_endpoint_score"
               
-              FIRST=true;
-              for METRIC in $METRICS; do
-                if [ "$FIRST" = "false" ]; then
+              # Function to query a metric and add to JSON
+              query_metric() {
+                local METRIC="$1"
+                local IS_FIRST="$2"
+                
+                if [ "$IS_FIRST" != "true" ]; then
                   echo "," >> $OUTPUT_FILE;
                 fi
-                FIRST=false;
                 
                 echo "Querying metric: $METRIC";
-                URL="https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query_range?query=${METRIC}&start=${START_UNIX}&end=${END_UNIX}&step=15";
+                
+                # URL encode the metric for the HTTP request (basic encoding)
+                ENCODED_METRIC=$(printf '%s' "$METRIC" | sed 's/ /%20/g; s/{/%7B/g; s/}/%7D/g; s/=/%3D/g; s/"/%22/g; s/\[/%5B/g; s/\]/%5D/g; s/(/%28/g; s/)/%29/g; s/,/%2C/g; s/:/%3A/g');
+                
+                # Use fine-grained sampling: 5-second intervals for detailed plots
+                URL="https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/api/v1/query_range?query=${ENCODED_METRIC}&start=${START_UNIX}&end=${END_UNIX}&step=5";
+                echo "Query URL: $URL";
                 RESPONSE=$(curl -s -k -H "Authorization: Bearer $TOKEN" "$URL" 2>/dev/null || echo '{"error":"query_failed"}');
                 
-                echo "\"$METRIC\":$RESPONSE" >> $OUTPUT_FILE;
+                # Log response status for debugging
+                RESPONSE_STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' || echo 'no status in response');
+                echo "Response status: $RESPONSE_STATUS";
+                
+                # Properly escape the metric name for JSON key (escape quotes and backslashes)
+                JSON_KEY=$(printf '%s' "$METRIC" | sed 's/\\/\\\\/g; s/"/\\"/g');
+                echo "\"$JSON_KEY\":$RESPONSE" >> $OUTPUT_FILE;
+              }
+              
+              FIRST=true;
+              
+              # Process all metrics
+              for METRIC in $ALL_METRICS; do
+                query_metric "$METRIC" "$FIRST";
+                FIRST=false;
+              done
+              
+              # Add all discovered vLLM metrics dynamically (only if not already included)
+              echo "Collecting additional discovered vLLM metrics...";
+              for VLLM_METRIC in $AVAILABLE_VLLM_METRICS; do
+                if [ -n "$VLLM_METRIC" ]; then
+                  # Check if this metric is already in our main list
+                  ALREADY_INCLUDED=false
+                  for EXISTING_METRIC in $ALL_METRICS; do
+                    if [ "$EXISTING_METRIC" = "$VLLM_METRIC" ]; then
+                      ALREADY_INCLUDED=true
+                      break
+                    fi
+                  done
+                  
+                  if [ "$ALREADY_INCLUDED" = "false" ]; then
+                    echo "," >> $OUTPUT_FILE;
+                    echo "Querying additional vLLM metric: $VLLM_METRIC";
+                    
+                    # Use the same query function for consistency
+                    query_metric "$VLLM_METRIC" "false";
+                  fi
+                fi
               done
               
               echo "}}" >> $OUTPUT_FILE;

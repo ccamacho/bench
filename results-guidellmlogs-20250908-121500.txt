@@ -1,6 +1,0 @@
-Running benchmark...
-Test benchmark start time (4 hours ago): 2025-09-08T08:15:02.854Z
-Skipping guidellm benchmark for Thanos metrics testing
-Test benchmark end time (now): 2025-09-08T12:15:07.858Z
-Benchmark complete. Results stored in /output/results-guidellm-20250908-121500.json
-Signaled metrics scraper to start data collection
