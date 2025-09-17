@@ -230,7 +230,7 @@ spec:
               echo "{\"benchmark_start\":\"$BENCHMARK_START\",\"benchmark_end\":\"$BENCHMARK_END\",\"available_vllm_metrics\":\"$AVAILABLE_VLLM_METRICS\",\"metrics\":{" > $OUTPUT_FILE;
               
               # Define comprehensive metrics for LLM-D monitoring (using basic shell syntax)
-              ALL_METRICS="DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_MEM_COPY_UTIL DCGM_FI_DEV_FB_USED DCGM_FI_DEV_FB_FREE DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_GPU_TEMP DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_MEM_CLOCK vllm:num_requests_running vllm:num_requests_waiting vllm:gpu_cache_usage_perc vllm:kv_cache_usage_perc vllm:prompt_tokens_total vllm:generation_tokens_total vllm:prefix_cache_hits_total vllm:prefix_cache_queries_total vllm:time_to_first_token_seconds_sum vllm:time_per_output_token_seconds_sum vllm:request_success_total vllm:avg_prompt_throughput_toks_per_s vllm:avg_generation_throughput_toks_per_s vllm:num_preemptions_total gaie_active_endpoints gaie_endpoint_score"
+              ALL_METRICS="DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_MEM_COPY_UTIL DCGM_FI_DEV_FB_USED DCGM_FI_DEV_FB_FREE DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_GPU_TEMP DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_MEM_CLOCK vllm:num_requests_running vllm:num_requests_waiting vllm:gpu_cache_usage_perc vllm:kv_cache_usage_perc vllm:prompt_tokens_total vllm:generation_tokens_total vllm:prefix_cache_hits_total vllm:prefix_cache_queries_total vllm:time_to_first_token_seconds_sum vllm:time_per_output_token_seconds_sum vllm:request_success_total vllm:num_preemptions_total gaie_active_endpoints gaie_endpoint_score"
               
               # Function to query a metric and add to JSON
               query_metric() {
