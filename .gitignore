@@ -3,3 +3,4 @@ guidellm
 llm-d-infra
 llm-d-deployer
 results
+logs-*/**
