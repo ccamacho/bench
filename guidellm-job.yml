@@ -109,10 +109,12 @@ spec:
                 --output-path $MULTITURN_OUTPUT_FILE \
                 --target ${LLM_D_ENDPOINT} \
                 --model "meta-llama/Llama-3.1-8B-Instruct" \
-                --rate-type synchronous \
-                --max-requests 800 \
-                --data "prompt_tokens=256,output_tokens=256,turns=3" 
+                --rate-type concurrent \
+                --rate 32 \
+                --max-seconds 120 \
+                --data "prompt_tokens=256,output_tokens=128,turns=3" 
               echo "Benchmark testing complete";
+              sleep 60;
               
               # Record benchmark end time
               BENCHMARK_END=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ");
