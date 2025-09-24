@@ -31,6 +31,16 @@ spec:
       #  runAsUser: 1000
       #  fsGroup: 1000
       initContainers:
+        - name: epp-restarter
+          image: bitnami/kubectl:latest
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Restarting EPP container to ensure clean logs...";
+              kubectl rollout restart deployment gaie-inference-scheduling-epp -n llm-d-inference-scheduling;
+              echo "Waiting for EPP rollout to complete...";
+              kubectl rollout status deployment gaie-inference-scheduling-epp -n llm-d-inference-scheduling --timeout=300s;
+              echo "EPP container restarted successfully";
         - name: timestamp-generator
           image: busybox
           command: ["sh", "-c"]
@@ -110,8 +120,8 @@ spec:
                 --target ${LLM_D_ENDPOINT} \
                 --model "meta-llama/Llama-3.1-8B-Instruct" \
                 --rate-type concurrent \
-                --rate 32 \
-                --max-seconds 120 \
+                --rate 64 \
+                --max-seconds 300 \
                 --data "prompt_tokens=256,output_tokens=128,turns=3" 
               echo "Benchmark testing complete";
               sleep 60;
