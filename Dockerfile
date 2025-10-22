@@ -22,9 +22,9 @@ RUN pip install --upgrade pip \
 
 # Clone guidellm, checkout PR #211 (multiturn support), build wheel, and install
 WORKDIR /tmp
-RUN git clone --branch feat/multiturn https://github.com/vllm-project/guidellm.git \
+RUN git clone --branch feat/adv_prefix https://github.com/vllm-project/guidellm.git \
  && cd guidellm \
- && echo "Building guidellm with multiturn support from feat/multiturn branch..." \
+ && echo "Building guidellm with multiturn support from feat/adv_prefix branch..." \
  && python -m build --wheel --no-isolation \
  && pip install dist/guidellm-*.whl \
  && pip install --upgrade "httpx==0.23.3" \
